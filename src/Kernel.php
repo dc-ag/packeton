@@ -65,6 +65,10 @@ class Kernel extends BaseKernel
             $container->import($configDir.'/{services}.php');
         }
 
+        if (is_dir($configDir. '/packages/custom')) {
+            $container->import($configDir. '/packages/{custom}/*.yaml');
+        }
+
         $container->import($configDir.'/{packages}/*.yaml');
         $container->import($configDir.'/{packages}/'.$this->environment.'/*.yaml');
 
