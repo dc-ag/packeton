@@ -52,10 +52,24 @@ class RequestResolver implements ContextAwareInterface, LoggerAwareInterface
                 }
             });
 
-            $result = $this->renderer->execute(trim($payload), $context);
-            $result = is_string($result) ? trim($result) : $result;
+            if (json_validate($payload)) {
+                $content = json_encode(
+                    json_decode(
+                        str_replace(
+                            '%packageName%',
+                            $context['package']->getName(),
+                            $payload,
+                        ),
+                        true
+                    ),
+                );
+            } else {
+                $result = $this->renderer->execute(trim($payload), $context);
 
-            $content = $result === null ? trim($legacy) : $result;
+                $result = is_string($result) ? trim($result) : $result;
+
+                $content = $result === null ? trim($legacy) : $result;
+            }
         }
 
         $content = [$webhook->getUrl(), $webhook->getOptions()['headers'] ?? null, $content === '' ? null : $content];
