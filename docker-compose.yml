@@ -1,25 +1,94 @@
-version: '3.6'
+version: '3.9'
+
+x-volumes: &default-volume
+    volumes:
+        - app-data:/data
+        - app-var:/var/www/packagist/var
+
+x-restart-policy: &restart_policy
+    restart: unless-stopped
+
+x-environment: &default-environment
+    REDIS_URL: redis://redis
+    DATABASE_URL: "postgresql://packeton:pack123@postgres:5432/packeton?serverVersion=14&charset=utf8"
+    SKIP_INIT: 1
 
 services:
-    packagist:
+    redis:
+        image: redis:7-alpine
+        hostname: redis
+        <<: *restart_policy
+        volumes:
+            - redis-data:/data
+
+    postgres:
+        image: postgres:14-alpine
+        hostname: postgres
+        <<: *restart_policy
+        volumes:
+            - postgres-data:/var/lib/postgresql/data
+        environment:
+            POSTGRES_USER: packeton
+            POSTGRES_PASSWORD: pack123
+            POSTGRES_DB: packeton
+
+    php-fpm:
         build:
             context: .
         image: packeton/packeton:latest
-        restart: unless-stopped
-        container_name: packagist
-        hostname: packagist
+        hostname: php-fpm
+        command: ['php-fpm', '-F']
+        <<: [*restart_policy, *default-volume]
         environment:
-#            ADMIN_USER: admin
-#            ADMIN_PASSWORD: 123456
-#            ADMIN_EMAIL: admin@example.com
-            TRUSTED_PROXIES: 172.16.0.0/12
-            # Default SQLite
-            DATABASE_URL: "mysql://app:!ChangeMe!@127.0.0.1:3306/app?serverVersion=8&charset=utf8mb4"
+            <<: *default-environment
+            SKIP_INIT: 0
+            WAIT_FOR_HOST: 'postgres:5432'
+        depends_on:
+            - "postgres"
+            - "redis"
 
-#            MAILER_DSN: smtp://user:pass@smtp.mailgun.org:587
-#            MAILER_FROM: Packeton <packeton@example.com>
+    nginx:
+        image: packeton/packeton:latest
+        hostname: nginx
         ports:
-#            setup nginx reverse proxy for ssl
             - '127.0.0.1:8088:80'
-        volumes:
-            - .docker:/data
+        <<: [*restart_policy, *default-volume]
+        command: >
+            bash -c 'sed s/_PHP_FPM_HOST_/php-fpm:9000/g < docker/nginx/nginx-tpl.conf > /etc/nginx/nginx.conf && nginx'
+        environment:
+            <<: *default-environment
+            WAIT_FOR_HOST: 'php-fpm:9000'
+        depends_on:
+            - "php-fpm"
+
+    worker:
+        build:
+            context: .
+        image: packeton/packeton:latest
+        hostname: packeton-worker
+        command: ['bin/console', 'packagist:run-workers', '-v']
+        user: www-data
+        <<: [*restart_policy, *default-volume]
+        environment:
+            <<: *default-environment
+            WAIT_FOR_HOST: 'php-fpm:9000'
+        depends_on:
+            - "php-fpm"
+
+    cron:
+        image: packeton/packeton:latest
+        hostname: packeton-cron
+        command: ['bin/console', 'okvpn:cron', '--demand', '--time-limit=3600']
+        user: www-data
+        <<: [*restart_policy, *default-volume]
+        environment:
+            <<: *default-environment
+            WAIT_FOR_HOST: 'php-fpm:9000'
+        depends_on:
+            - "php-fpm"
+
+volumes:
+    redis-data:
+    postgres-data:
+    app-data:
+    app-var:
