@@ -435,6 +435,110 @@ class PackageRepository extends EntityRepository
         return $stmt->fetchAllAssociative();
     }
 
+    /**
+     * Returns 4 SQL expressions (as an array) that each extract one dot-separated
+     * segment of a normalizedversion column (X.Y.Z.W) as an integer.
+     * Sorting ORDER BY these 4 expressions fixes lexicographic bugs like "9.0.0.0" > "78.0.0.0".
+     * Uses only SUBSTR + INSTR + CAST, which are standard SQL supported by both MySQL 8 and SQLite 3.25+.
+     * Any -SUFFIX (e.g. -RC1) on the last segment is stripped by CAST AS UNSIGNED.
+     *
+     * @return string[] [seg1expr, seg2expr, seg3expr, seg4expr]
+     */
+    private function semverSortExprs(string $col): array
+    {
+        $c = $col;
+        $after1 = "SUBSTR($c, INSTR($c, '.') + 1)";
+        $after2 = "SUBSTR($after1, INSTR($after1, '.') + 1)";
+        $after3 = "SUBSTR($after2, INSTR($after2, '.') + 1)";
+
+        return [
+            "CAST(SUBSTR($c, 1, INSTR($c, '.') - 1) AS UNSIGNED)",
+            "CAST(SUBSTR($after1, 1, INSTR($after1, '.') - 1) AS UNSIGNED)",
+            "CAST(SUBSTR($after2, 1, INSTR($after2, '.') - 1) AS UNSIGNED)",
+            "CAST($after3 AS UNSIGNED)",
+        ];
+    }
+
+    /**
+     * Builds the ranked CTE/subquery alias that selects the single current version
+     * (highest semver, non dev-*, optionally filtered by versionTag) per package.
+     * Uses ROW_NUMBER() window function — supported by MySQL 8 and SQLite 3.25+.
+     * This avoids a correlated subquery and is significantly faster on large datasets.
+     */
+    private function buildRankedVersionSubquery(?string $versionTagFilter): string
+    {
+        [$s1, $s2, $s3, $s4] = $this->semverSortExprs('pv2.normalizedversion');
+        $tagFilter = $versionTagFilter !== '' ? $versionTagFilter : '';
+
+        return "SELECT pv2.id, pv2.package_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY pv2.package_id
+                        ORDER BY $s1 DESC, $s2 DESC, $s3 DESC, $s4 DESC, pv2.id DESC
+                    ) AS rn
+                FROM package_version pv2
+                WHERE pv2.version NOT LIKE 'dev-%'$tagFilter";
+    }
+
+    public function getCurrentDependentsCount(string $name, ?string $versionTag = null): int
+    {
+        $params = ['name' => $name];
+        $innerVersionTagFilter = '';
+        if ($versionTag !== null) {
+            $innerVersionTagFilter = ' AND pv2.version LIKE :versionTag';
+            $params['versionTag'] = '%' . $versionTag . '%';
+        }
+        $ranked = $this->buildRankedVersionSubquery($innerVersionTagFilter);
+
+        $sql = 'SELECT COUNT(DISTINCT x.package_id) count FROM (
+                SELECT pv.package_id, MIN(CASE WHEN r.id IS NOT NULL THEN 0 ELSE 1 END) as dep_priority
+                FROM (' . $ranked . ') ranked
+                INNER JOIN package_version pv ON pv.id = ranked.id AND ranked.rn = 1
+                LEFT JOIN link_require r ON (r.version_id = pv.id AND r.packageName = :name)
+                LEFT JOIN link_require_dev rd ON (rd.version_id = pv.id AND rd.packageName = :name)
+                WHERE (r.id IS NOT NULL OR rd.id IS NOT NULL)
+                GROUP BY pv.package_id
+            ) x';
+
+        $cacheKey = sha1('current_dependents_count_v4_' . $name . '_' . $versionTag);
+        $stmt = $this->getEntityManager()->getConnection()
+            ->executeCacheQuery($sql, $params, [], new QueryCacheProfile(86400, $cacheKey, $this->getEntityManager()->getConfiguration()->getResultCacheImpl()));
+        $result = $stmt->fetchAllAssociative();
+
+        return (int)$result[0]['count'];
+    }
+
+    public function getCurrentDependents(string $name, int $offset = 0, int $limit = 15, ?string $versionTag = null): array
+    {
+        $params = ['name' => $name];
+        $innerVersionTagFilter = '';
+        if ($versionTag !== null) {
+            $innerVersionTagFilter = ' AND pv2.version LIKE :versionTag';
+            $params['versionTag'] = '%' . $versionTag . '%';
+        }
+        $ranked = $this->buildRankedVersionSubquery($innerVersionTagFilter);
+
+        $sql = 'SELECT p.id, p.name, p.description, p.language, p.abandoned, p.replacementPackage,
+                CASE WHEN x.dep_priority = 0 THEN \'require\' ELSE \'require-dev\' END as dependency_type
+            FROM (
+                SELECT pv.package_id,
+                    MIN(CASE WHEN r.id IS NOT NULL THEN 0 ELSE 1 END) as dep_priority
+                FROM (' . $ranked . ') ranked
+                INNER JOIN package_version pv ON pv.id = ranked.id AND ranked.rn = 1
+                LEFT JOIN link_require r ON (r.version_id = pv.id AND r.packageName = :name)
+                LEFT JOIN link_require_dev rd ON (rd.version_id = pv.id AND rd.packageName = :name)
+                WHERE (r.id IS NOT NULL OR rd.id IS NOT NULL)
+                GROUP BY pv.package_id
+            ) x
+            INNER JOIN package p ON p.id = x.package_id
+            ORDER BY p.name ASC LIMIT ' . ((int)$limit) . ' OFFSET ' . ((int)$offset);
+
+        $cacheKey = sha1('current_dependents_v4_' . $name . '_' . $offset . '_' . $limit . '_' . $versionTag);
+        $stmt = $this->getEntityManager()->getConnection()
+            ->executeCacheQuery($sql, $params, [], new QueryCacheProfile(86400, $cacheKey, $this->getEntityManager()->getConfiguration()->getResultCacheImpl()));
+
+        return $stmt->fetchAllAssociative();
+    }
+
     public function getSuggestCount($name)
     {
         $sql = 'SELECT COUNT(DISTINCT pv.package_id) count

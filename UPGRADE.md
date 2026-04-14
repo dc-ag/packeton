@@ -1,5 +1,63 @@
 # UPGRADE
 
+## #210226 — New endpoint: `/api/packages/{name}/current-dependents.json`
+
+A new API endpoint has been added to expose **current dependents** — packages that depend on a given
+package in their latest current (dev) version only. Historical-only dependents are excluded.
+
+### Endpoint
+
+```
+GET /api/packages/{name}/current-dependents.json
+```
+
+### Query parameters
+
+| Parameter     | Required | Description |
+|---------------|----------|-------------|
+| `page`        | No       | Page number (default `1`, 15 items per page) |
+| `version_tag` | No       | Substring filter on the dependent's current version string |
+
+### Response shape
+
+```json
+{
+  "name": "vendor/package",
+  "count": 2,
+  "packages": [
+    {
+      "id": 1,
+      "name": "vendor/dependent-a",
+      "description": "...",
+      "dependency_type": "require"
+    },
+    {
+      "id": 2,
+      "name": "vendor/dependent-b",
+      "description": "...",
+      "dependency_type": "require-dev"
+    }
+  ]
+}
+```
+
+### Semantics
+
+- **current/latest only**: only the single highest semVer version per dependent package is considered
+  (branch aliases such as `dev-master` are excluded; among remaining versions the one with the highest
+  `normalizedVersion`, tie-broken by `id DESC`, is selected). Packages whose highest version no longer
+  requires the target are **not** included.
+- **`dependency_type`**: `require` or `require-dev`. If a package appears in both for the same target,
+  it is returned **once** with `dependency_type = require` (`require` wins over `require-dev`).
+- **`version_tag`**: substring match (`LIKE %value%`) applied **before** selecting the highest version —
+  only versions whose `version` string contains the tag are eligible as the "current" version.
+  This means a package can appear in filtered results even if its absolute latest version does not match
+  the tag, as long as the highest matching version still has the dependency.
+  List and count queries use identical filter semantics, so pagination totals are always consistent.
+- The existing `/api/packages/{name}/dependents` endpoint is **unchanged**.
+
+---
+
 ## UPGRADE FROM 1.4 to 2.0
 
 - Require PHP 8.1+

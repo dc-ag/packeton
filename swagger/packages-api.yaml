@@ -89,6 +89,44 @@ paths:
             tags: [ Packages ]
             summary: 'View the dependents of a package'
             <<: *pkg-param
+
+    '/api/packages/{name}/current-dependents.json':
+        get:
+            tags: [ Packages ]
+            summary: 'View current dependents of a package (latest/current versions only)'
+            description: |
+                Returns packages that depend on `{name}` in their **highest semVer version**.
+                Branch aliases (versions matching `dev-*`, e.g. `dev-master`) are excluded from
+                consideration. Among all remaining versions of a dependent package, the one with the
+                highest `normalizedVersion` (tie-broken by insertion order) is selected as "current".
+                A package is included only if that current version still has the dependency on `{name}`.
+                Packages that dropped the dependency in their latest release are excluded.
+
+                **`dependency_type`** is `require` or `require-dev`. When a package appears in both
+                `require` and `require-dev` for the same target, it is returned once with
+                `dependency_type = require` (require wins).
+
+                **`version_tag`** is an optional substring filter (`LIKE %value%`) applied to the
+                version string **before** selecting the highest version. Only versions whose `version`
+                string contains the tag are eligible as the "current" version. This allows filtering
+                to a specific release line — e.g. `version_tag=1.0` restricts to `1.0.x` versions,
+                so a package can appear even if its absolute latest version (e.g. `2.0.0`) does not
+                match, as long as the highest matching version still has the dependency.
+            parameters:
+                -   name: name
+                    in: path
+                    required: true
+                    type: string
+                -   name: page
+                    in: query
+                    required: false
+                    type: integer
+                    description: Page number (default 1, 15 items per page)
+                -   name: version_tag
+                    in: query
+                    required: false
+                    type: string
+                    description: Optional substring filter on the dependent package current version string
     
     '/api/packages/{name}/changelog':
         get:

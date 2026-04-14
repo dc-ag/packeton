@@ -981,6 +981,46 @@ class PackageController extends AbstractController
     }
 
     #[Route(
+        '/packages/{name}/current-dependents.json',
+        name: 'view_package_current_dependents',
+        requirements: ['name' => '([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?|ext-[A-Za-z0-9_.-]+?)'],
+        methods: ['GET']
+    )]
+    #[Route(
+        '/api/packages/{name}/current-dependents.json',
+        name: 'api_package_current_dependents',
+        requirements: ['name' => '([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?|ext-[A-Za-z0-9_.-]+?)'],
+        methods: ['GET']
+    )]
+    #[IsGranted('ROLE_FULL_CUSTOMER')]
+    public function currentDependentsAction(Request $req, string $name): JsonResponse
+    {
+        $this->checkSubrepositoryAccess($name);
+        $page = max(1, (int)$req->query->get('page', 1));
+        $versionTag = $req->query->get('version_tag') ?: null;
+
+        /** @var PackageRepository $repo */
+        $repo = $this->registry->getRepository(Package::class);
+        $depCount = $repo->getCurrentDependentsCount($name, $versionTag);
+        $packages = $repo->getCurrentDependents($name, ($page - 1) * 15, 15, $versionTag);
+
+        $paginator = new Pagerfanta(new FixedAdapter($depCount, $packages));
+        $paginator->setMaxPerPage(15);
+        $paginator->setCurrentPage($page, false, true);
+
+        $data = [
+            'packages' => array_values(iterator_to_array($paginator)),
+            'count' => $depCount,
+            'name' => $name,
+        ];
+
+        $response = new JsonResponse($data);
+        $response->setSharedMaxAge(12 * 3600);
+
+        return $response;
+    }
+
+    #[Route(
         '/packages/{name}/suggesters',
         name: 'view_package_suggesters',
         requirements: ['name' => '([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?|ext-[A-Za-z0-9_.-]+?)'],
