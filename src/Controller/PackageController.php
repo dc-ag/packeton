@@ -405,6 +405,7 @@ class PackageController extends AbstractController
         }
 
         $data['dependents'] = $repo->getDependentCount($package->getName());
+        $data['currentDependents'] = $repo->getCurrentDependentsCount($package->getName());
         $data['suggesters'] = $repo->getSuggestCount($package->getName());
         $data['groups'] = $repo->getPackageGroupsData($package->getId());
 
@@ -978,6 +979,37 @@ class PackageController extends AbstractController
 
 
         return $this->render('package/dependents.html.twig', $data);
+    }
+
+    #[Route(
+        '/packages/{name}/current-dependents',
+        name: 'view_package_current_dependents_html',
+        requirements: ['name' => '([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?|ext-[A-Za-z0-9_.-]+?)'],
+        methods: ['GET']
+    )]
+    #[IsGranted('ROLE_FULL_CUSTOMER')]
+    public function currentDependentsHtmlAction(Request $req, string $name): Response
+    {
+        $this->checkSubrepositoryAccess($name);
+        $page = max(1, (int)$req->query->get('page', 1));
+        $versionTag = $req->query->get('version_tag') ?: null;
+
+        /** @var PackageRepository $repo */
+        $repo = $this->registry->getRepository(Package::class);
+        $depCount = $repo->getCurrentDependentsCount($name, $versionTag);
+        $packages = $repo->getCurrentDependents($name, ($page - 1) * 15, 15, $versionTag);
+
+        $paginator = new Pagerfanta(new FixedAdapter($depCount, $packages));
+        $paginator->setMaxPerPage(15);
+        $paginator->setCurrentPage($page, false, true);
+
+        $data['packages'] = $paginator;
+        $data['count'] = $depCount;
+        $data['meta'] = $this->getPackagesMetadata($data['packages']);
+        $data['name'] = $name;
+        $data['versionTag'] = $versionTag;
+
+        return $this->render('package/current-dependents.html.twig', $data);
     }
 
     #[Route(

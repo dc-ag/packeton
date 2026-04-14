@@ -211,6 +211,14 @@
                                     {{ dependents|number_format(0, '.', '&#8201;')|raw }}
                                 </p>
                             {% endif %}
+                            {% if currentDependents is defined %}
+                                <p>
+                                    <span>
+                                        <a href="{{ path('view_package_current_dependents_html', {name: package.name}) }}" rel="nofollow">Current Dependents</a>:
+                                    </span>
+                                    {{ currentDependents|number_format(0, '.', '&#8201;')|raw }}
+                                </p>
+                            {% endif %}
                             {% if suggesters is defined %}
                                 <p>
                                     <span>
