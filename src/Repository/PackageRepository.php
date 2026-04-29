@@ -518,10 +518,12 @@ class PackageRepository extends EntityRepository
         $ranked = $this->buildRankedVersionSubquery($innerVersionTagFilter);
 
         $sql = 'SELECT p.id, p.name, p.description, p.language, p.abandoned, p.replacementPackage,
-                CASE WHEN x.dep_priority = 0 THEN \'require\' ELSE \'require-dev\' END as dependency_type
+                CASE WHEN x.dep_priority = 0 THEN \'require\' ELSE \'require-dev\' END as dependency_type,
+                x.required_version
             FROM (
                 SELECT pv.package_id,
-                    MIN(CASE WHEN r.id IS NOT NULL THEN 0 ELSE 1 END) as dep_priority
+                    MIN(CASE WHEN r.id IS NOT NULL THEN 0 ELSE 1 END) as dep_priority,
+                    COALESCE(MIN(CASE WHEN r.id IS NOT NULL THEN r.packageVersion END), MIN(rd.packageVersion)) as required_version
                 FROM (' . $ranked . ') ranked
                 INNER JOIN package_version pv ON pv.id = ranked.id AND ranked.rn = 1
                 LEFT JOIN link_require r ON (r.version_id = pv.id AND r.packageName = :name)
@@ -532,7 +534,7 @@ class PackageRepository extends EntityRepository
             INNER JOIN package p ON p.id = x.package_id
             ORDER BY p.name ASC LIMIT ' . ((int)$limit) . ' OFFSET ' . ((int)$offset);
 
-        $cacheKey = sha1('current_dependents_v4_' . $name . '_' . $offset . '_' . $limit . '_' . $versionTag);
+        $cacheKey = sha1('current_dependents_v5_' . $name . '_' . $offset . '_' . $limit . '_' . $versionTag);
         $stmt = $this->getEntityManager()->getConnection()
             ->executeCacheQuery($sql, $params, [], new QueryCacheProfile(86400, $cacheKey, $this->getEntityManager()->getConfiguration()->getResultCacheImpl()));
 

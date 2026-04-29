@@ -543,6 +543,25 @@ class CurrentDependentsControllerTest extends WebTestCase
         );
     }
 
+    public function testRequiredVersionIsPresentInResponse(): void
+    {
+        $client = static::createClient();
+        $this->basicLogin('admin', $client);
+
+        $client->request('GET', '/api/packages/test-vendor/target-pkg/current-dependents.json');
+        $data = $this->getJsonResponse($client);
+
+        $byName = array_column($data['packages'], null, 'name');
+
+        // dep-require uses packageVersion='*' in link_require
+        static::assertArrayHasKey('required_version', $byName['test-vendor/dep-require'], 'required_version key must be present');
+        static::assertSame('*', $byName['test-vendor/dep-require']['required_version']);
+
+        // dep-require-dev uses packageVersion='*' in link_require_dev
+        static::assertArrayHasKey('required_version', $byName['test-vendor/dep-require-dev'], 'required_version key must be present');
+        static::assertSame('*', $byName['test-vendor/dep-require-dev']['required_version']);
+    }
+
     public function testOrderingIsAlphabetical(): void
     {
         $client = static::createClient();
