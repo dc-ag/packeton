@@ -1053,6 +1053,32 @@ class PackageController extends AbstractController
     }
 
     #[Route(
+        '/all-packages/dependency-manifests.json',
+        name: 'view_package_dependency_manifests',
+        methods: ['GET']
+    )]
+    #[Route(
+        '/api/all-packages/dependency-manifests.json',
+        name: 'api_package_dependency_manifests',
+        methods: ['GET']
+    )]
+    #[IsGranted('ROLE_FULL_CUSTOMER')]
+    public function dependencyManifestsAction(Request $req): JsonResponse
+    {
+        $includeRc = filter_var($req->query->get('rc', false), FILTER_VALIDATE_BOOLEAN);
+        $allowed = $this->subRepositoryHelper->allowedPackageIds();
+
+        /** @var PackageRepository $repo */
+        $repo = $this->registry->getRepository(Package::class);
+        $manifests = $repo->getDependencyManifests($allowed, $includeRc);
+
+        $response = new JsonResponse(['manifests' => $manifests]);
+        $response->setEncodingOptions(JSON_UNESCAPED_SLASHES);
+
+        return $response;
+    }
+
+    #[Route(
         '/packages/{name}/suggesters',
         name: 'view_package_suggesters',
         requirements: ['name' => '([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?|ext-[A-Za-z0-9_.-]+?)'],

@@ -541,6 +541,99 @@ class PackageRepository extends EntityRepository
         return $stmt->fetchAllAssociative();
     }
 
+    /**
+     * Returns the current dependency manifest of every package in one shot: the package's current
+     * version (highest semVer, excluding dev-* branch aliases; stable-only unless $includeRc) and
+     * the require / require-dev links of exactly that version.
+     *
+     * This is the bulk equivalent of resolving each package's current {name}.json and reading its
+     * require / require-dev — built for the renovate-controller recovery flow, which otherwise needs
+     * one HTTP request per package. See swagger/packages-api.yaml.
+     *
+     * @param int[]|null $allowed allowed package ids (subrepository scope); null = no restriction
+     *
+     * @return list<array{name: string, currentVersion: string, require: array<string, string>, requireDev: array<string, string>}>
+     */
+    public function getDependencyManifests(?array $allowed = null, bool $includeRc = false): array
+    {
+        if (is_array($allowed) && empty($allowed)) {
+            return [];
+        }
+
+        $stabilityFilter = $includeRc
+            ? " AND pv2.version LIKE '%-rc%'"
+            : " AND pv2.normalizedversion NOT LIKE '%-%'";
+        $ranked = $this->buildRankedVersionSubquery($stabilityFilter);
+
+        $currentSql = 'SELECT cur.id AS version_id, p.name AS name, cur.version AS current_version
+            FROM (' . $ranked . ') ranked
+            INNER JOIN package_version cur ON cur.id = ranked.id AND ranked.rn = 1
+            INNER JOIN package p ON p.id = cur.package_id';
+
+        $params = [];
+        $types = [];
+        if ($allowed) {
+            $currentSql .= ' WHERE p.id IN (:ids)';
+            $params['ids'] = array_values($allowed);
+            $types['ids'] = ArrayParameterType::INTEGER;
+        }
+
+        $conn = $this->getEntityManager()->getConnection();
+        $currentRows = $conn->executeQuery($currentSql, $params, $types)->fetchAllAssociative();
+
+        /** @var array<string, array{name: string, currentVersion: string, require: array<string, string>, requireDev: array<string, string>}> $manifests */
+        $manifests = [];
+        /** @var array<int, string> $versionIdToName */
+        $versionIdToName = [];
+        foreach ($currentRows as $row) {
+            $name = (string) $row['name'];
+            $manifests[$name] = [
+                'name'           => $name,
+                'currentVersion' => (string) $row['current_version'],
+                'require'        => [],
+                'requireDev'     => [],
+            ];
+            $versionIdToName[(int) $row['version_id']] = $name;
+        }
+
+        if ($versionIdToName !== []) {
+            $versionIds = array_keys($versionIdToName);
+            $this->collectManifestLinks('link_require', 'require', $versionIds, $versionIdToName, $manifests);
+            $this->collectManifestLinks('link_require_dev', 'requireDev', $versionIds, $versionIdToName, $manifests);
+        }
+
+        return array_values($manifests);
+    }
+
+    /**
+     * Folds the require / require-dev links of the given version ids into the manifests map.
+     *
+     * @param int[]                                                                                                       $versionIds
+     * @param array<int, string>                                                                                          $versionIdToName
+     * @param array<string, array{name: string, currentVersion: string, require: array<string, string>, requireDev: array<string, string>}> $manifests
+     */
+    private function collectManifestLinks(
+        string $table,
+        string $manifestKey,
+        array $versionIds,
+        array $versionIdToName,
+        array &$manifests
+    ): void {
+        $sql = 'SELECT l.version_id AS version_id, l.packageName AS dep_name, l.packageVersion AS dep_constraint
+            FROM ' . $table . ' l WHERE l.version_id IN (:vids)';
+        $rows = $this->getEntityManager()->getConnection()
+            ->executeQuery($sql, ['vids' => $versionIds], ['vids' => ArrayParameterType::INTEGER])
+            ->fetchAllAssociative();
+
+        foreach ($rows as $row) {
+            $name = $versionIdToName[(int) $row['version_id']] ?? null;
+            if ($name === null) {
+                continue;
+            }
+            $manifests[$name][$manifestKey][(string) $row['dep_name']] = (string) $row['dep_constraint'];
+        }
+    }
+
     public function getSuggestCount($name)
     {
         $sql = 'SELECT COUNT(DISTINCT pv.package_id) count
