@@ -499,7 +499,8 @@ class PackageRepository extends EntityRepository
                 GROUP BY pv.package_id
             ) x';
 
-        $cacheKey = sha1('current_dependents_count_v4_' . $name . '_' . $versionTag);
+        $ns = $this->currentDependentsCacheNs($name);
+        $cacheKey = sha1('current_dependents_count_v5_' . $ns . '_' . $name . '_' . $versionTag);
         $stmt = $this->getEntityManager()->getConnection()
             ->executeCacheQuery($sql, $params, [], new QueryCacheProfile(86400, $cacheKey, $this->getEntityManager()->getConfiguration()->getResultCacheImpl()));
         $result = $stmt->fetchAllAssociative();
@@ -534,11 +535,47 @@ class PackageRepository extends EntityRepository
             INNER JOIN package p ON p.id = x.package_id
             ORDER BY p.name ASC LIMIT ' . ((int)$limit) . ' OFFSET ' . ((int)$offset);
 
-        $cacheKey = sha1('current_dependents_v5_' . $name . '_' . $offset . '_' . $limit . '_' . $versionTag);
+        $ns = $this->currentDependentsCacheNs($name);
+        $cacheKey = sha1('current_dependents_v6_' . $ns . '_' . $name . '_' . $offset . '_' . $limit . '_' . $versionTag);
         $stmt = $this->getEntityManager()->getConnection()
             ->executeCacheQuery($sql, $params, [], new QueryCacheProfile(86400, $cacheKey, $this->getEntityManager()->getConfiguration()->getResultCacheImpl()));
 
         return $stmt->fetchAllAssociative();
+    }
+
+    /**
+     * Namespace token folded into the current-dependents cache keys of $name. Rotated by
+     * invalidateCurrentDependentsCache() whenever a package that links to $name changes its
+     * require / require-dev, so stale entries become unreachable instead of waiting out the TTL.
+     */
+    private function currentDependentsCacheNs(string $name): string
+    {
+        $cache = $this->getEntityManager()->getConfiguration()->getResultCacheImpl();
+        if ($cache === null) {
+            return '0';
+        }
+
+        $token = $cache->fetch('cdep_ns_' . sha1($name));
+
+        return $token !== false ? (string) $token : '0';
+    }
+
+    /**
+     * Invalidates the cached current-dependents list / count of each given package name by rotating
+     * its namespace token. Called from the package Updater once links have been persisted.
+     *
+     * @param iterable<string> $names
+     */
+    public function invalidateCurrentDependentsCache(iterable $names): void
+    {
+        $cache = $this->getEntityManager()->getConfiguration()->getResultCacheImpl();
+        if ($cache === null) {
+            return;
+        }
+
+        foreach ($names as $name) {
+            $cache->save('cdep_ns_' . sha1((string) $name), bin2hex(random_bytes(6)), 30 * 86400);
+        }
     }
 
     /**
