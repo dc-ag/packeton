@@ -42,6 +42,7 @@ use Packeton\Entity\SuggestLink;
 use Packeton\Event\SecurityAdvisoryEvent;
 use Packeton\Event\UpdaterEvent;
 use Packeton\Model\ProviderManager;
+use Packeton\Repository\PackageRepository;
 use Packeton\Repository\VersionRepository;
 use Packeton\Service\DistConfig;
 use Packeton\Service\DistManager;
@@ -130,6 +131,10 @@ class Updater implements UpdaterInterface
         /** @var EntityManagerInterface $em */
         $em = $this->doctrine->getManager();
         $rootIdentifier = null;
+
+        // require / require-dev targets before this update — captured up front so links removed
+        // during the crawl are still invalidated in the affected packages' current-dependents cache.
+        $dependentsTargetsBefore = $this->fetchCurrentDependentsTargets($em, $package->getId());
 
         if ($repository instanceof VcsRepository) {
             $rootIdentifier = $repository->getDriver()->getRootIdentifier();
@@ -264,6 +269,18 @@ class Updater implements UpdaterInterface
         $package->setCrawledAt(new \DateTime('now', new \DateTimeZone('UTC')));
         $em->flush();
 
+        if ($newVersions || $updatedVersions || $deletedVersions || ($flags & self::DELETE_BEFORE)) {
+            $affectedTargets = array_unique(array_merge(
+                $dependentsTargetsBefore,
+                $this->fetchCurrentDependentsTargets($em, $package->getId())
+            ));
+            if ($affectedTargets) {
+                /** @var PackageRepository $packageRepo */
+                $packageRepo = $this->doctrine->getRepository(Package::class);
+                $packageRepo->invalidateCurrentDependentsCache($affectedTargets);
+            }
+        }
+
         if (true === $isNewPackage) {
             $this->dispatcher->dispatch(new UpdaterEvent($package, $flags), UpdaterEvent::PACKAGE_PERSIST);
         }
@@ -277,6 +294,27 @@ class Updater implements UpdaterInterface
         }
 
         return $package;
+    }
+
+    /**
+     * Distinct require / require-dev target names across all versions of a package — the set of
+     * packages whose current-dependents listing may start or stop including this package.
+     *
+     * @return string[]
+     */
+    private function fetchCurrentDependentsTargets(EntityManagerInterface $em, ?int $packageId): array
+    {
+        if (!$packageId) {
+            return [];
+        }
+
+        $sql = 'SELECT l.packageName FROM link_require l
+                    INNER JOIN package_version pv ON pv.id = l.version_id WHERE pv.package_id = :pid
+                UNION
+                SELECT l.packageName FROM link_require_dev l
+                    INNER JOIN package_version pv ON pv.id = l.version_id WHERE pv.package_id = :pid';
+
+        return $em->getConnection()->executeQuery($sql, ['pid' => $packageId])->fetchFirstColumn();
     }
 
     /**

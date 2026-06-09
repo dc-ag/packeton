@@ -128,6 +128,45 @@ paths:
                     type: string
                     description: Optional substring filter on the dependent package current version string
     
+    '/api/all-packages/dependency-manifests.json':
+        get:
+            tags: [ Packages ]
+            summary: 'Bulk current dependency manifests of every package'
+            description: |
+                Returns, in a single response, the current dependency manifest of **every** package
+                the caller may access. For each package the **current version** is selected as the
+                highest semVer version excluding branch aliases (`dev-*`); by default only stable
+                versions are considered (pre-releases, whose `normalizedVersion` contains `-`, are
+                excluded). The manifest carries the `require` and `require-dev` maps of exactly that
+                current version (constraint strings verbatim, including platform/meta entries).
+
+                This is the bulk equivalent of fetching each package's `{name}.json` and reading its
+                require / require-dev, intended to let the renovate-controller recovery flow reconcile
+                its state with one request instead of one per package.
+
+                **`rc`** (optional, boolean) — when truthy, the current version of each package is the
+                highest **RC** version (`version LIKE %-rc%`) instead of the highest stable version.
+
+                Response shape:
+                ```json
+                {
+                  "manifests": [
+                    {
+                      "name": "vendor/package",
+                      "currentVersion": "v40.1.0",
+                      "require":    { "vendor/dep": "40.1.0", "php": "~8.4.0" },
+                      "requireDev": { "vendor/tool": "8.0.5" }
+                    }
+                  ]
+                }
+                ```
+            parameters:
+                -   name: rc
+                    in: query
+                    required: false
+                    type: boolean
+                    description: When true, select each package's highest RC version instead of its highest stable version
+
     '/api/packages/{name}/changelog':
         get:
             tags: [ Packages ]
