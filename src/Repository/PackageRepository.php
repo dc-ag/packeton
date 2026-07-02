@@ -408,8 +408,10 @@ class PackageRepository extends EntityRepository
                 SELECT pv.package_id FROM link_require_dev r INNER JOIN package_version pv ON (pv.id = r.version_id AND pv.development = true) WHERE r.packageName = :name
             ) x';
 
+        $ns = $this->currentDependentsCacheNs($name);
+        $cacheKey = sha1('dependents_count_v2_' . $ns . '_' . $name);
         $stmt = $this->getEntityManager()->getConnection()
-            ->executeQuery($sql, ['name' => $name], [], new QueryCacheProfile(86400, sha1('dependents_count_' . $name), $this->getEntityManager()->getConfiguration()->getResultCacheImpl()));
+            ->executeQuery($sql, ['name' => $name], [], new QueryCacheProfile(86400, $cacheKey, $this->getEntityManager()->getConfiguration()->getResultCacheImpl()));
         $result = $stmt->fetchAllAssociative();
 
         return (int)$result[0]['count'];
@@ -424,12 +426,14 @@ class PackageRepository extends EntityRepository
                 SELECT pv.package_id FROM link_require_dev r INNER JOIN package_version pv ON (pv.id = r.version_id AND pv.development = true) WHERE r.packageName = :name
             ) x ON x.package_id = p.id ORDER BY p.name ASC LIMIT ' . ((int)$limit) . ' OFFSET ' . ((int)$offset);
 
+        $ns = $this->currentDependentsCacheNs($name);
+        $cacheKey = sha1('dependents_v2_' . $ns . '_' . $name . '_' . $offset . '_' . $limit);
         $stmt = $this->getEntityManager()->getConnection()
             ->executeCacheQuery(
                 $sql,
                 ['name' => $name],
                 [],
-                new QueryCacheProfile(86400, sha1('dependents_' . $name . $offset . '_' . $limit), $this->getEntityManager()->getConfiguration()->getResultCacheImpl())
+                new QueryCacheProfile(86400, $cacheKey, $this->getEntityManager()->getConfiguration()->getResultCacheImpl())
             );
 
         return $stmt->fetchAllAssociative();

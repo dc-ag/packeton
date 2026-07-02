@@ -72,7 +72,14 @@ when@prod:
     framework:
         cache:
             pools:
+                # Backed by the shared Redis (not cache.app) so the result cache is visible to every
+                # pod. The php-fpm and worker pods each have their own ephemeral var/cache (emptyDir),
+                # so a filesystem-backed result cache cannot see the invalidation the worker performs
+                # in Updater::update() — dependents/current-dependents listings would stay stale on the
+                # web pod until the TTL expired. A shared backend makes that invalidation effective.
                 doctrine.result_cache_pool:
-                    adapter: cache.app
+                    adapter: cache.adapter.redis
+                    provider: '%env(REDIS_URL)%'
+                # Metadata / proxy cache is build-specific and per-pod by design — keep it local.
                 doctrine.system_cache_pool:
                     adapter: cache.system
