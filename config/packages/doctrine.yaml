@@ -77,9 +77,13 @@ when@prod:
                 # so a filesystem-backed result cache cannot see the invalidation the worker performs
                 # in Updater::update() — dependents/current-dependents listings would stay stale on the
                 # web pod until the TTL expired. A shared backend makes that invalidation effective.
+                # Reuse the existing snc_redis phpredis client rather than a DSN: with a DSN,
+                # Symfony builds its own lazy connection via a generated Redis6Proxy, whose method
+                # signatures are incompatible with the installed phpredis 6.x (symfony/cache 6.4.7).
+                # Passing an already-instantiated \Redis service skips that proxy entirely.
                 doctrine.result_cache_pool:
                     adapter: cache.adapter.redis
-                    provider: '%env(REDIS_URL)%'
+                    provider: snc_redis.default
                 # Metadata / proxy cache is build-specific and per-pod by design — keep it local.
                 doctrine.system_cache_pool:
                     adapter: cache.system
