@@ -1,0 +1,6 @@
+packeton:
+  mirrors:
+    packagist:
+      url: https://repo.packagist.org
+  metadata:
+    format: full
