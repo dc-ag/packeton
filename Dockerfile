@@ -1,4 +1,4 @@
-FROM php:8.3-fpm-alpine
+FROM php:8.3.36-fpm-alpine
 
 RUN apk --no-cache add nginx curl runit subversion \
     git bash openssh-client zip unzip redis shadow && \
