@@ -13,6 +13,9 @@ parameters:
     env(MAILER_FROM): 'Packeton <packeton@example.com>'
     env(PUBLIC_ACCESS): false
     env(STORAGE_SOURCE): local
+    # Comma separated host names that webhooks may call although they resolve to a private
+    # address, for example a service inside the same cluster. Every other host stays blocked.
+    env(PACKETON_WEBHOOK_PRIVATE_HOSTS): ''
 
     # twig sandbox
     security_policy_tags: ['app', 'for', 'if', 'spaceless', 'set', 'do', 'apply', 'verbatim', 'return']
@@ -229,6 +232,11 @@ services:
             - [addTokenChecker, ['@Packeton\Security\Token\IntegrationTokenChecker']]
 
     Symfony\Component\HttpClient\NoPrivateNetworkHttpClient: ~
+
+    Packeton\Webhook\HookRequestExecutor:
+        arguments:
+            $httpClient: '@http_client'
+            $privateHosts: '%env(csv:PACKETON_WEBHOOK_PRIVATE_HOSTS)%'
 
     Packeton\Package\Updater:
       calls:

@@ -20,6 +20,8 @@ class HookRequestExecutor implements ContextAwareInterface, LoggerAwareInterface
         private readonly RequestResolver $requestResolver,
         private readonly HmacOpensslCrypter $crypter,
         private readonly HttpClientInterface $noPrivateHttpClient,
+        private readonly HttpClientInterface $httpClient,
+        private readonly array $privateHosts = [],
     ) {
     }
 
@@ -32,7 +34,6 @@ class HookRequestExecutor implements ContextAwareInterface, LoggerAwareInterface
     public function executeWebhook(Webhook $webhook, array $variables = [], ?HttpClientInterface $client = null)
     {
         $variables['webhook'] = $webhook;
-        $client ??= $this->noPrivateHttpClient;
 
         $maxAttempt = 3;
         try {
@@ -78,7 +79,18 @@ class HookRequestExecutor implements ContextAwareInterface, LoggerAwareInterface
                 $cloneRequestOpts = $options;
                 [$url, $options] = $secrets ? $this->processSecrets($secrets, $request->getUrl(), $options) : [$request->getUrl(), $options];
 
-                $response = $client->request($request->getMethod(), $url, $options);
+                $requestClient = $client;
+                if (null === $requestClient) {
+                    if ($this->isPrivateHostAllowed($url)) {
+                        // A redirect could lead to any other private address.
+                        $options['max_redirects'] = 0;
+                        $requestClient = $this->httpClient;
+                    } else {
+                        $requestClient = $this->noPrivateHttpClient;
+                    }
+                }
+
+                $response = $requestClient->request($request->getMethod(), $url, $options);
                 $headers = array_map(fn ($item) => $item[0] ?? $item, $response->getHeaders(false));
                 $options = [
                     'status_code' => $response->getStatusCode(),
@@ -105,6 +117,18 @@ class HookRequestExecutor implements ContextAwareInterface, LoggerAwareInterface
         }
 
         return $responses;
+    }
+
+    private function isPrivateHostAllowed(string $url): bool
+    {
+        $host = parse_url($url, PHP_URL_HOST);
+        if (!is_string($host) || '' === $host) {
+            return false;
+        }
+
+        $allowed = array_map('strtolower', array_filter(array_map('trim', $this->privateHosts)));
+
+        return in_array(strtolower($host), $allowed, true);
     }
 
     private function processSecrets(array $secrets, string $url, array $options): array
