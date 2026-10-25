@@ -74,7 +74,8 @@ class ProxyRepositoryFacade extends AbstractProxyRepositoryDecorator
             }
 
             $this->repository->dumpRootMeta($meta);
-            return $meta;
+
+            return $this->repository->rootMetadata() ?? new JsonMetadata(\json_encode($meta, \JSON_UNESCAPED_SLASHES));
         });
 
         // set default available_packages if repository is small.
